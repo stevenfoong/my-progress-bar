@@ -1,0 +1,12 @@
+{
+  "line_y": 1042,
+  "line_thickness": 4,
+  "line_x": [98, 1820],
+  "dim_line": true,
+  "x_start": 165,
+  "x_end": 1700,
+  "house_x": 72,
+  "castle_x": 1850,
+  "scale": 3,
+  "interval": 60
+}

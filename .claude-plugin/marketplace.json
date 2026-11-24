@@ -1,0 +1,11 @@
+{
+  "name": "my-progress-bar",
+  "owner": { "name": "stevenfoong" },
+  "plugins": [
+    {
+      "name": "pixel-progress-bar",
+      "source": "./",
+      "description": "Animated pixel-art journey progress bar for videos."
+    }
+  ]
+}
