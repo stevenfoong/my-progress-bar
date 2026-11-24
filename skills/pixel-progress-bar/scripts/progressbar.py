@@ -38,36 +38,106 @@ DEFAULTS = {
     "house_x": 72,
     "castle_x": 1850,
     "scale": 3,                # sprite pixel size at 1080p
-    "interval": 60,            # seconds between milestones
+    "interval": None,          # seconds between milestones; null = auto (1, 2, 3, 5, 10... min)
+    "max_milestones": 10,      # auto interval keeps the count at or below this
+    "max_partners": 3,         # most partners who join in one video
     "min_end_gap": 10,         # drop a milestone closer than this to the end
+    "seed": None,              # random seed for the automatic story; null = derived from duration
     "story": None,             # list of item names, or null for the automatic story
     "milestones": None,        # explicit [{"time": s, "item": name}], overrides interval/story
     "background": "#232a45",   # showcase / frame background
 }
 
+# kind: prop (walk past) | enemy (defeated at its mark) | partner (joins the party)
+# tier: early / mid / late third of the video (used by the automatic story); boss = always last
 ITEMS = {
-    "signpost":     {"kind": "prop", "frames": ["signpost"]},
-    "warning_sign": {"kind": "prop", "frames": ["warning_sign"]},
-    "camp":         {"kind": "prop", "frames": [f"camp_{i}" for i in range(4)], "dt": 0.18},
-    "goblin":       {"kind": "enemy", "frames": ["goblin_0", "goblin_1"], "dt": 0.35},
-    "slime":        {"kind": "enemy", "frames": [f"slime_{i}" for i in (0, 0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0)], "dt": 0.12},
-    "dragon":       {"kind": "enemy", "frames": [f"dragon_{i}" for i in range(4)], "dt": 0.18},
+    # places
+    "signpost":     {"kind": "prop", "tier": "early", "frames": ["signpost"]},
+    "well":         {"kind": "prop", "tier": "early", "frames": ["well"]},
+    "windmill":     {"kind": "prop", "tier": "early", "frames": [f"windmill_{i}" for i in range(4)], "dt": 0.15},
+    "cart":         {"kind": "prop", "tier": "early", "frames": ["cart"]},
+    "bridge":       {"kind": "prop", "tier": "mid", "frames": ["bridge"]},
+    "camp":         {"kind": "prop", "tier": "mid", "frames": [f"camp_{i}" for i in range(4)], "dt": 0.18},
+    "chest":        {"kind": "prop", "tier": "mid", "frames": ["chest_0"], "after": ["chest_1"]},
+    "haunted_tree": {"kind": "prop", "tier": "late", "frames": ["haunted_tree_0"] * 12 + ["haunted_tree_1"], "dt": 0.2},
+    "warning_sign": {"kind": "prop", "tier": "late", "frames": ["warning_sign"]},
+    # enemies
+    "slime":        {"kind": "enemy", "tier": "early", "frames": [f"slime_{i}" for i in (0, 0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0)], "dt": 0.12},
+    "bat":          {"kind": "enemy", "tier": "early", "frames": [f"bat_{i}" for i in range(4)], "dt": 0.1, "lift": 9},
+    "goblin":       {"kind": "enemy", "tier": "mid", "frames": ["goblin_0", "goblin_1"], "dt": 0.35},
+    "mushroom":     {"kind": "enemy", "tier": "mid", "frames": ["mushroom_0", "mushroom_1"], "dt": 0.3},
+    "wolf":         {"kind": "enemy", "tier": "mid", "frames": ["wolf_0", "wolf_1"], "dt": 0.4},
+    "skeleton":     {"kind": "enemy", "tier": "late", "frames": ["skeleton_0", "skeleton_1"], "dt": 0.25},
+    "ghost":        {"kind": "enemy", "tier": "late", "frames": [f"ghost_{i}" for i in range(4)], "dt": 0.2, "lift": 4},
+    "dragon":       {"kind": "enemy", "tier": "boss", "frames": [f"dragon_{i}" for i in range(4)], "dt": 0.18},
+    # partners
     "mage":         {"kind": "partner"},
     "knight":       {"kind": "partner"},
+    "archer":       {"kind": "partner"},
+    "cat":          {"kind": "partner", "space": 21},
+    "dog":          {"kind": "partner", "space": 24},
 }
-DEFAULT_STORY = ["signpost", "goblin", "mage", "slime", "camp", "knight", "warning_sign", "dragon"]
+PARTNERS = [k for k, v in ITEMS.items() if v["kind"] == "partner"]
+AUTO_INTERVALS = [60, 120, 180, 300, 600, 900, 1200, 1800, 3600]
 
 
-def auto_story(n):
-    """Pick n items that still read as a story: start calm, dragon last."""
+def milestone_times(T, cfg):
+    """Milestone times. Auto interval: the smallest of 1, 2, 3, 5, 10... min giving <= max_milestones."""
+    gap = cfg["min_end_gap"]
+    def times(iv): return [k * iv for k in range(1, int(T // iv) + 1) if k * iv <= T - gap]
+    if cfg.get("interval"):
+        return cfg["interval"], times(cfg["interval"])
+    for iv in AUTO_INTERVALS:
+        ts = times(iv)
+        if len(ts) <= cfg["max_milestones"]:
+            break
+    if not ts and T > 2 * gap:          # short clip: still give the dragon a moment
+        ts = [round(T * 0.8, 2)]
+    return iv, ts
+
+
+def auto_story(n, rng, max_partners=3):
+    """n items that read as a story: dragon last, warning sign just before it (if n >= 5),
+    partners in the middle stretch, a camp mid-way (if n >= 6), places and enemies matched
+    to early / mid / late thirds, no item used twice."""
     if n <= 0: return []
-    if n == 1: return ["dragon"]
-    base = DEFAULT_STORY
-    if n <= len(base):
-        idx = [round(i * (len(base) - 1) / (n - 1)) for i in range(n)]
-        return [base[i] for i in idx]
-    extra = ["goblin", "slime"] * n
-    return base[:-1] + extra[: n - len(base)] + ["dragon"]
+    story = [None] * n; story[-1] = "dragon"
+    free = list(range(n - 1))
+    if n >= 5:
+        story[n - 2] = "warning_sign"; free.remove(n - 2)
+    frac = lambda i: (i + 0.5) / max(1, n - 1)
+    tier = lambda i: "early" if frac(i) < 1 / 3 else ("mid" if frac(i) < 2 / 3 else "late")
+    p = min(max_partners, (n - 1) // 3)
+    cand = [i for i in free if i > 0 and 0.15 <= frac(i) <= 0.85]
+    slots = sorted(rng.sample(cand, min(p, len(cand))))
+    for i, who in zip(slots, rng.sample(PARTNERS, len(slots))):
+        story[i] = who; free.remove(i)
+    if n >= 6:
+        mid = [i for i in free if tier(i) == "mid"]
+        if mid:
+            i = rng.choice(mid); story[i] = "camp"; free.remove(i)
+    used = set(x for x in story if x)
+    # about half of the open slots are fights, never two fights in a row
+    want_enemies = math.ceil(len(free) / 2)
+    enemy_slots, order = set(), free[:]
+    rng.shuffle(order)
+    for i in order:
+        if len(enemy_slots) >= want_enemies: break
+        nb = [story[j] if 0 <= j < n else None for j in (i - 1, i + 1)]
+        if any(j in enemy_slots for j in (i - 1, i + 1)) or any(x and ITEMS[x]["kind"] == "enemy" for x in nb):
+            continue
+        enemy_slots.add(i)
+    for i in sorted(free):
+        want = "enemy" if i in enemy_slots else "prop"
+        prev = story[i - 1] if i > 0 else None
+        def pool(kind, same_tier):
+            return [k for k, v in ITEMS.items() if v["kind"] == kind and v.get("tier") != "boss" and k not in used
+                    and (not same_tier or v.get("tier") == tier(i))]
+        other = "enemy" if want == "prop" else "prop"
+        choices = pool(want, True) or pool(want, False) or pool(other, True) or pool(other, False) or \
+                  [k for k, v in ITEMS.items() if v["kind"] in ("prop", "enemy") and v.get("tier") != "boss" and k != prev]
+        story[i] = rng.choice(choices); used.add(story[i])
+    return story
 
 
 def hexc(s):
@@ -107,23 +177,30 @@ class Bar:
     # ---- plan
     def _plan(self):
         c = self.cfg
+        import random
+        self.seed = c["seed"] if c.get("seed") is not None else int(self.T)
+        self.interval = None
         if c.get("milestones"):
             ms = [(float(m["time"]), m["item"]) for m in c["milestones"]]
         else:
-            times, t = [], c["interval"]
-            while t <= self.T - c["min_end_gap"]: times.append(t); t += c["interval"]
-            story = c.get("story") or auto_story(len(times))
+            self.interval, times = milestone_times(self.T, c)
+            story = c.get("story")
+            if story and len(story) != len(times):
+                raise SystemExit(f"story has {len(story)} items but there are {len(times)} milestones "
+                                 f"(every {self.interval:g}s); give exactly {len(times)}")
+            story = story or auto_story(len(times), random.Random(self.seed), c["max_partners"])
             ms = list(zip(times, story))
         for _, it in ms:
             if it not in ITEMS: raise SystemExit(f"unknown item {it!r}; choose from {sorted(ITEMS)}")
-        out, nth = [], 0
+        out, nth, prev_sp = [], 0, 14
         for tm, it in sorted(ms):
             m = {"time": tm, "item": it, "kind": ITEMS[it]["kind"], "x": self.X(tm)}
             if m["kind"] == "enemy":
                 _, bb = self.spr(ITEMS[it]["frames"][0])
                 m["x"] = m["x"] + self.hero_front + (bb[2] - bb[0]) / 2 * self.S - 2 * self.S
-            if m["kind"] == "partner":
-                nth += 1; m["offset"] = 16 * self.S * nth
+            if m["kind"] == "partner":     # walk behind the hero, spaced by body length
+                sp = ITEMS[it].get("space", 16)
+                nth += max(sp, prev_sp) + 2; prev_sp = sp; m["offset"] = nth * self.S
             out.append(m)
         return out
 
@@ -136,10 +213,10 @@ class Bar:
             self.cache[name] = (im.resize((im.width * self.S, im.height * self.S), Image.NEAREST), im.getbbox())
         return self.cache[name]
 
-    def put(self, c, name, cx, anchor_x=None, ground_row=None):
+    def put(self, c, name, cx, anchor_x=None, ground_row=None, lift=0):
         im, bb = self.spr(name)
         ax = (anchor_x if anchor_x is not None else (bb[0] + bb[2]) / 2) * self.S
-        gr = (ground_row if ground_row is not None else bb[3]) * self.S
+        gr = ((ground_row if ground_row is not None else bb[3]) + lift) * self.S
         c.alpha_composite(im, (int(cx - ax), int(self.ground - gr)))
 
     # ---- one frame
@@ -164,15 +241,16 @@ class Bar:
             it, kind, tm, x = m["item"], m["kind"], m["time"], m["x"]
             spec = ITEMS[it]
             if kind == "prop":
-                fr = spec["frames"]; self.put(c, fr[int(a / spec.get("dt", 1)) % len(fr)], x)
+                fr = spec["after"] if (spec.get("after") and t >= tm) else spec["frames"]
+                self.put(c, fr[int(a / spec.get("dt", 1)) % len(fr)], x)
             elif kind == "enemy":
-                fr = spec["frames"]; g = self.spr(fr[0])[1][3]
+                fr = spec["frames"]; g = self.spr(fr[0])[1][3]; lift = spec.get("lift", 0)
                 if t < tm:
                     if t > tm - 1.0 * speed and int(a * 25) % 4 < 2: continue     # hit flash
-                    self.put(c, fr[int(a / spec["dt"]) % len(fr)], x, ground_row=g)
+                    self.put(c, fr[int(a / spec["dt"]) % len(fr)], x, ground_row=g, lift=lift)
                 else:
                     k = int((t - tm) / (0.1 * speed))
-                    if k < 5: self.put(c, f"puff_{k}", x, ground_row=20)
+                    if k < 5: self.put(c, f"puff_{k}", x, ground_row=20, lift=lift)
                     else: self.put(c, f"coin_{int(a / 0.5) % 2}", x)
             else:
                 partners.append(m)
@@ -240,9 +318,13 @@ def main():
         p.add_argument("--scale", type=int)
         p.add_argument("--line-y", type=int, dest="line_y")
         p.add_argument("--no-dim", action="store_const", const=False, dest="dim_line")
+        p.add_argument("--seed", type=int, help="re-roll the automatic story")
+        p.add_argument("--plan", help="milestones JSON written by `story --save` (exact replay)")
 
     p = sub.add_parser("story", help="print the milestone plan"); common(p, video=False)
-    p.add_argument("--duration", type=float, required=True)
+    p.add_argument("--duration", type=float, help="seconds (or give --video)")
+    p.add_argument("--video", help="read the duration from this video")
+    p.add_argument("--save", help="write the plan as JSON (pass it back with --plan)")
     p = sub.add_parser("detect", help="find the line to walk on")
     p.add_argument("video"); p.add_argument("--time", type=float, default=30)
     p.add_argument("--color", default="#d4ab58"); p.add_argument("--tolerance", type=int, default=45)
@@ -265,10 +347,16 @@ def main():
 
     if a.cmd == "detect":
         return detect(a)
-    ov = {k: getattr(a, k, None) for k in ("interval", "scale", "line_y", "dim_line")}
+    ov = {k: getattr(a, k, None) for k in ("interval", "scale", "line_y", "dim_line", "seed")}
     if getattr(a, "story", None): ov["story"] = [s.strip() for s in a.story.split(",")]
+    if getattr(a, "plan", None):
+        with open(a.plan) as f: ov["milestones"] = json.load(f)["milestones"]
     cfg = load_config(a.config, ov)
 
+    if a.cmd == "story" and a.video:
+        a.duration = probe(a.video)[0]
+    if a.cmd == "story" and a.duration is None:
+        raise SystemExit("story needs --duration or --video")
     if a.cmd in ("story", "showcase", "frame"):
         bar = Bar(cfg, a.duration, fps=getattr(a, "fps", 25))
     else:
@@ -277,6 +365,12 @@ def main():
         print(f"video {W}x{H} {fps:g}fps {T:.1f}s; strip y={bar.y0} h={bar.h} scale={bar.S}", file=sys.stderr)
 
     if a.cmd == "story":
+        how = f"every {bar.interval / 60:g} min" if bar.interval else "explicit times"
+        print(f"duration {bar.T:.1f}s, {len(bar.milestones)} milestones ({how}), seed {bar.seed}")
+        if a.save:
+            with open(a.save, "w") as f:
+                json.dump({"seed": bar.seed, "milestones": [{"time": m["time"], "item": m["item"]} for m in bar.milestones]}, f, indent=1)
+            print(f"saved {a.save}")
         for m in bar.milestones:
             print(f"{int(m['time'] // 60):02d}:{int(m['time'] % 60):02d}  {m['item']:<13} {m['kind']:<8} x={m['x']:.0f}")
     elif a.cmd == "still":

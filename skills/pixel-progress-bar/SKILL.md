@@ -1,6 +1,6 @@
 ---
 name: pixel-progress-bar
-description: Add an animated pixel-art "journey" progress bar to a video. A hero in a purple cape walks from a village house to an evil castle in step with the video's time, and at each milestone (default every minute) he passes props, defeats enemies (goblin, slime, dragon boss) or gains partners (mage, knight) who follow him. Use when the user wants a progress bar, timeline or journey bar on a video, wants it burned in or as a transparent overlay for an editor (FilmCraft, Premiere and so on), wants a short fast-forward showcase clip of the bar, or wants the pixel sprites (hero, house, castle, goblin, slime, camp, signpost, warning sign, dragon, mage, knight) as PNG or GIF.
+description: Add an animated pixel-art "journey" progress bar to a video. A hero in a purple cape walks from a village house to an evil castle in step with the video's time, and at each milestone (every 1, 2, 3, 5 or 10 minutes, at most 10 milestones) he passes places, defeats enemies or gains partners who follow him, ending with a dragon boss. The library has 22 components. Use when the user wants a progress bar, timeline or journey bar on a video, wants it burned in or as a transparent overlay for an editor (FilmCraft, Premiere and so on), wants a short fast-forward showcase clip of the bar, or wants the pixel sprites as PNG or GIF.
 ---
 
 # Pixel progress bar
@@ -17,24 +17,51 @@ Scripts (Python 3 + Pillow; rendering also needs `ffmpeg`/`ffprobe`):
 
 Below, `$SKILL` is the directory that holds this file.
 
+## Components (22)
+
+| Kind | Early third | Middle third | Late third |
+|---|---|---|---|
+| **Places** (party walks past) | signpost, well, windmill, cart | bridge, camp, chest (opens as the party passes) | haunted_tree, warning_sign |
+| **Enemies** (defeated at the mark) | slime, bat | goblin, mushroom, wolf | skeleton, ghost |
+| **Partners** (join and follow) | mage, knight, archer, cat, dog: any third except the very start | | |
+| **Fixed** | `house` at the start, `dragon` at the last milestone, `castle` at the end | | |
+
+## Choosing the story (you decide)
+
+Rules: **dragon always last**; **warning_sign just before it** (when there are 5 or more milestones);
+**at most 3 partners**, joining in the middle stretch; a **camp** around the middle (6 or more milestones);
+roughly **half of the other slots are fights, never two fights in a row**; **no item used twice**;
+places and enemies come from the tier that matches their third of the video.
+
+Milestone spacing is automatic: the smallest of **1, 2, 3, 5, 10, 15, 20, 30 or 60 min** that gives
+**10 or fewer** milestones. A mark within 10 s of the end is dropped. Override with `--interval SECONDS`.
+
+1. `progressbar.py story --video VIDEO` (or `--duration S`) prints the automatic pick. It is seeded from the
+   duration, so it is the same every run; `--seed N` re-rolls it.
+2. **Make it fit the video when you can.** For example, a spooky topic → ghost, haunted_tree, skeleton;
+   a cosy topic → cat, dog, camp, windmill; a money or treasure topic → chest, cart. Pass exactly as many
+   items as there are milestones, following the rules: `--story well,bat,cat,camp,...,warning_sign,dragon`.
+   Otherwise keep the automatic pick.
+3. Save the final plan with `story ... --save plan.json` and pass `--plan plan.json` to every later
+   command (`still`, `burn`, `overlay`, `showcase`), so the preview and the final render match. Keep
+   `plan.json` next to the output video so the video can be re-rendered exactly.
+4. Tell the user the plan as a short timeline (`01:00 well · 02:00 bat · …`) before the long render.
+
 ## Workflow
 
-1. **Probe and plan.** `python3 $SKILL/scripts/progressbar.py story --duration <seconds>` prints the
-   milestone plan. The default is one item per full minute, dragon last; a mark within 10 s of the end is dropped.
-   Agree on the story with the user if they care: `--story signpost,goblin,mage,...`, or exact
-   times through `"milestones"` in a config.
+1. **Plan:** see "Choosing the story" above.
 2. **Find the line to walk on.** For the owner's template, use `--config $SKILL/presets/magazine-1080p.json`.
    For a new layout, run `progressbar.py detect VIDEO --color '#rrggbb'`. It prints `line_y`, `line_thickness` and `line_x`
    (in 1080p reference units) to put in a config JSON. If the video has no line, set `"dim_line": false`
    and pick `line_y` (the ground row) yourself.
-3. **Preview before rendering.** `progressbar.py still VIDEO --config CFG --time 5 125 300 480 --out chk.png`
+3. **Preview before rendering.** `progressbar.py still VIDEO --config CFG --plan plan.json --time 5 125 300 480 --out chk.png`
    writes `chk_<t>.png`. Look at them: feet on the line, nothing cut off at the edges, enemies sitting just past their minute mark.
 4. **Render.**
-   - Burned in: `progressbar.py burn VIDEO --config CFG --out out.mp4`. Keeps the audio, H.264 CRF 18.
-   - Overlay for an editor: `progressbar.py overlay VIDEO --config CFG --out bar.mov`. ProRes 4444 with alpha,
+   - Burned in: `progressbar.py burn VIDEO --config CFG --plan plan.json --out out.mp4`. Keeps the audio, H.264 CRF 18.
+   - Overlay for an editor: `progressbar.py overlay VIDEO --config CFG --plan plan.json --out bar.mov`. ProRes 4444 with alpha,
      full frame by default, about 2.3 GB for 8 min at 1080p. `--strip` renders only the bar band (about 5× smaller) and prints the y to place it at.
      In FilmCraft: `file.import` it, then `timeline.place` it on V2 above the footage on V1.
-   - Social clip: `progressbar.py showcase --duration <video seconds> --length 30 --out showcase.mp4`.
+   - Social clip: `progressbar.py showcase --duration <video seconds> --plan plan.json --length 30 --out showcase.mp4`.
      The story is fast-forwarded, but the walking and effects play at normal speed. It includes a `mm:ss / mm:ss` timer (`--no-timer` to hide it).
 5. **Verify.** Extract a few frames from the result (`ffmpeg -ss T -i out.mp4 -frames:v 1 f.png`) around milestones
    and look at them before reporting success. Check that the output duration matches the input.
@@ -44,14 +71,16 @@ If the project says heavy work runs on a remote machine (for example a CLAUDE.md
 `$SKILL/scripts`, the config and the video there. The machine needs only `python3`, `python3-pil` and `ffmpeg`.
 Run the job under `nohup` or `tmux` and pull back only the result.
 
-## Story rules (built in)
+## What happens on screen
 
-- **Props** (`signpost`, `camp`, `warning_sign`) sit at their mark; the party walks past them.
-- **Enemies** (`goblin`, `slime`, `dragon`) are placed so the hero's sword touches them exactly at the mark. They blink for about 1 s,
-  burst into a puff of smoke and leave a sparkling coin as a permanent marker.
-- **Partners** (`mage`, `knight`) wait at their mark facing the hero. Once he passes, they walk behind him, one partner every 16 sprite pixels.
+- **Places** sit at their mark; the party walks past them. The chest opens once the hero reaches it.
+- **Enemies** are placed so the hero's sword touches them exactly at the mark. They blink for about 1 s,
+  burst into a puff of smoke and leave a sparkling coin as a permanent marker. The bat and ghost float.
+- **Partners** wait at their mark facing the hero. Once he passes, they walk behind him, spaced by body length.
 - The hero's position is linear in time. The part of the line not yet travelled is dimmed and dashed (`dim_line`).
-- `auto_story(n)` keeps the story readable for any number of marks: it starts calm, puts the dragon last, and adds extra goblins and slimes for long videos.
+- **New components:** if the user wants something not in the library, draw it in `scripts/sprites.py` following
+  `reference/config.md` → "Adding a sprite". Show the user a preview, then offer to commit it back to the skill's repo
+  (stevenfoong/my-progress-bar) so other devices get it. An installed plugin's copy is a cache and gets overwritten on update.
 
 ## Gotchas
 

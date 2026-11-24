@@ -1,6 +1,6 @@
 {
   "name": "pixel-progress-bar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Animated pixel-art journey progress bar for videos: hero walks from village to castle, defeating enemies and gathering partners at every milestone.",
   "author": { "name": "stevenfoong" },
   "repository": "https://github.com/stevenfoong/my-progress-bar",
